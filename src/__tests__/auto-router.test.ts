@@ -11,17 +11,17 @@ describe('autoRouter', () => {
     // Create test controllers directory
     mkdirSync(testDir, { recursive: true })
 
-    // Create test route files
+    // Create test route files (using .js for dynamic imports to work in tests)
     writeFileSync(
-      join(testDir, 'get-users.ts'),
+      join(testDir, 'get-users.js'),
       'export default async (ctx) => { ctx.res.body = { users: [] } }'
     )
     writeFileSync(
-      join(testDir, 'post-login.ts'),
+      join(testDir, 'post-login.js'),
       'export default async (ctx) => { ctx.res.body = { token: "test" } }'
     )
     writeFileSync(
-      join(testDir, 'get-[id].ts'),
+      join(testDir, 'get-[id].js'),
       'export default async (ctx) => { ctx.res.body = { id: ctx.params.id } }'
     )
   })
@@ -57,6 +57,7 @@ describe('autoRouter', () => {
   it('should handle default options', async () => {
     const mockApp = {
       get: jest.fn(),
+      post: jest.fn(),
       $routes: undefined,
     }
 
