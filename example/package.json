@@ -1,0 +1,24 @@
+{
+  "name": "hoa-auto-router-example",
+  "version": "1.0.0",
+  "description": "Example project demonstrating hoa-auto-router usage",
+  "type": "module",
+  "main": "app.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/app.js",
+    "dev": "tsx app.ts"
+  },
+  "keywords": [],
+  "author": "Mflix Team",
+  "license": "MIT",
+  "dependencies": {
+    "hoa": "^0.3.0",
+    "hoa-auto-router": "file:.."
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.3.0"
+  }
+}

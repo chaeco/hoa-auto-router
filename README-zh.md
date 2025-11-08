@@ -1,0 +1,219 @@
+# @chaeco/hoa-auto-router
+
+Hoa.js 框架的文件式自动路由插件。为简单起见，路由**仅限函数**。
+
+## 特性
+
+- 🚀 基于文件结构的零配置自动路由
+- 📁 支持嵌套目录结构和自动路径构建
+- 🔒 内置权限元数据（`requiresAuth`）支持
+- 🤝 与 `@chaeco/hoa-jwt-permission` 完美集成
+- 🔍 内置文件名和参数验证
+- 📝 完全支持 TypeScript 类型安全
+- ⚡ 支持 `[param]` 语法动态参数
+- 🛡️ 重复路由检测
+- 🎯 支持异步处理器
+- 🌍 全局 `defaultRequiresAuth` 配置
+
+## 安装
+
+```bash
+npm install @chaeco/hoa-auto-router
+# 或
+yarn add @chaeco/hoa-auto-router
+```
+
+## 快速开始
+
+### 基本设置
+
+```typescript
+import { Hoa } from 'hoa'
+import { autoRouter } from '@chaeco/hoa-auto-router'
+
+const app = new Hoa()
+
+// 推荐：严格模式（默认开启，只允许函数导出）
+app.extend(
+  autoRouter({
+    dir: './controllers',
+    prefix: '/api',
+    defaultRequiresAuth: false, // 黑名单模式
+    strict: true, // 严格模式（默认值）
+  })
+)
+
+app.listen(3000)
+```
+
+### 严格模式
+
+**严格模式（strict: true）- 推荐**：
+
+- ✅ 只允许纯函数导出
+- ✅ 只允许 `createHandler()` 包装导出
+- ❌ 不允许普通对象导出 `{ handler, meta }`
+- 🎯 强制团队代码风格一致
+
+**非严格模式（strict: false）**：
+
+- ✅ 允许所有导出方式
+- ⚠️ 会显示警告提示
+
+## 文件命名规则
+
+### 单参数示例
+
+- `post-login.ts` → `POST /api/login`
+- `get-users.ts` → `GET /api/users`
+- `get-[id].ts` → `GET /api/:id`
+- `delete-[id].ts` → `DELETE /api/:id`
+
+### 多参数示例
+
+- `get-[userId]-[postId].ts` → `GET /api/:userId/:postId`
+- `put-[userId]-profile.ts` → `PUT /api/:userId/profile`
+
+### 嵌套目录示例
+
+- `users/posts/get-[id].ts` → `GET /api/users/posts/:id`
+
+## 权限元数据
+
+### 支持的两种导出方法
+
+#### 方法 1：纯函数（推荐大多数路由）
+
+```typescript
+// controllers/get-users.ts
+export default async ctx => {
+  ctx.res.body = { users: [] }
+}
+// 使用全局 defaultRequiresAuth 配置
+```
+
+#### 方法 2：createHandler 包装（需要权限元数据时）
+
+```typescript
+import { createHandler } from '@chaeco/hoa-auto-router'
+
+// controllers/users/get-info.ts - 受保护的接口
+export default createHandler(
+  async ctx => {
+    ctx.res.body = { success: true, data: { userId: ctx.currentUser?.id } }
+  },
+  { requiresAuth: true, description: '获取用户信息' }
+)
+
+// controllers/auth/post-login.ts - 公开接口
+export default createHandler(
+  async ctx => {
+    ctx.res.body = { success: true }
+  },
+  { requiresAuth: false }
+)
+```
+
+### 配置模式
+
+**黑名单模式（推荐用于公开 API）**：
+
+```typescript
+autoRouter({
+  defaultRequiresAuth: false,  // 默认公开
+})
+// 只需要在需要保护的路由上标记
+export default createHandler(async (ctx) => { ... }, { requiresAuth: true })
+```
+
+**白名单模式（推荐用于内部 API）**：
+
+```typescript
+autoRouter({
+  defaultRequiresAuth: true,  // 默认受保护
+})
+// 只需要在需要公开的路由上标记
+export default createHandler(async (ctx) => { ... }, { requiresAuth: false })
+```
+
+## 与 @chaeco/hoa-jwt-permission 集成
+
+路由会自动收集用于权限检查：
+
+```typescript
+import { Hoa } from 'hoa'
+import { jwt } from '@hoajs/jwt'
+import { autoRouter } from '@chaeco/hoa-auto-router'
+import { jwtAuth } from '@chaeco/hoa-jwt-permission'
+import config from './config'
+
+const app = new Hoa()
+
+// 第 1 层：Token 验证
+app.use(jwt({ secret: config.jwtSecret, algorithms: ['HS256'] }))
+
+// 第 2 层：权限检查（从 autoRouter 自动发现）
+app.use(jwtAuth({ autoDiscovery: true }))
+
+// 第 3 层：路由发现和注册
+app.extend(
+  autoRouter({
+    defaultRequiresAuth: false,
+  })
+)
+
+// 现在所有路由都基于元数据自动保护！
+app.listen(3000)
+```
+
+**工作原理：**
+
+1. `autoRouter` 扫描 `controllers/` 并提取权限元数据
+2. 将路由信息存储在 `app.$routes` 中，包含 `requiresAuth` 标志
+3. `jwtAuth` 从 `app.$routes` 读取并验证请求
+4. **无需重复路由配置！**
+
+## 类型安全
+
+```typescript
+import { createHandler, RouteHandler } from '@chaeco/hoa-auto-router'
+import type { HoaContext } from 'hoa'
+
+export default createHandler({ requiresAuth: true }, (async (ctx: HoaContext): Promise<void> => {
+  ctx.res.body = { success: true }
+}) as RouteHandler)
+```
+
+## API 参考
+
+### `autoRouter(options)`
+
+**选项：**
+
+- `dir` (string) - 控制器目录路径（默认：`'./controllers'`）
+- `prefix` (string) - API 路由前缀（默认：`'/api'`）
+- `defaultRequiresAuth` (boolean) - 全局默认权限要求（默认：`false`）
+
+### `createHandler(meta?, handler)`
+
+包装函数，为路由处理器附加元数据。
+
+**参数：**
+
+- `meta` (object, 可选)
+  - `requiresAuth` (boolean) - 路由是否需要认证
+  - `description` (string) - 路由描述
+- `handler` (function) - 异步路由处理器
+
+**返回：** 包装后的处理器函数
+
+## 验证规则
+
+- ✅ 文件名必须以有效的 HTTP 方法开头
+- ✅ 参数必须使用方括号语法：`[paramName]`
+- ✅ 空参数 `[]` 不允许
+- ✅ 只允许默认导出（不允许命名导出）
+- ✅ 默认导出必须是函数
+- ✅ 目录名不应包含 HTTP 方法关键字
+- ✅ 检测重复路由
+- ✅ 路由会显示权限指示符（🔒 表示受保护路由）
