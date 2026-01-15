@@ -32,6 +32,30 @@ export interface RouteMeta {
     [key: string]: any;
 }
 /**
+ * Route information interface
+ * 路由信息接口
+ */
+export interface RouteInfo {
+    method: string;
+    path: string;
+    requiresAuth?: boolean;
+}
+/**
+ * Application routes registry interface
+ * 应用路由注册表接口
+ */
+export interface AppRoutesRegistry {
+    publicRoutes: Array<{
+        method: string;
+        path: string;
+    }>;
+    protectedRoutes: Array<{
+        method: string;
+        path: string;
+    }>;
+    all: RouteInfo[];
+}
+/**
  * Route handler configuration interface
  * 路由处理器配置接口
  * Only supports return value of createHandler function
