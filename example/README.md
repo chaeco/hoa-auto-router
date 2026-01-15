@@ -4,13 +4,17 @@
 
 ## 项目结构
 
-```
+```text
 example/
-├── app.ts                 # 主应用文件
-├── controllers/           # 控制器目录
-│   ├── get-users.ts       # GET /api/users
-│   ├── post-login.ts      # POST /api/login
-│   └── get-[id].ts        # GET /api/:id
+├── app.ts                   # 基本应用文件
+├── multi-level-example.ts   # 多层级配置示例
+├── controllers/             # 控制器目录
+│   ├── get-users.ts         # GET /api/users
+│   ├── post-login.ts        # POST /api/login
+│   ├── get-[id].ts          # GET /api/:id
+│   ├── get.ts               # GET /api（仅方法名）
+│   └── admin/
+│       └── get-dashboard.ts # GET /api/admin/dashboard
 ├── package.json
 ├── tsconfig.json
 └── README.md
@@ -34,6 +38,8 @@ npm install
 
 ## 运行示例
 
+### 基本示例
+
 ```bash
 # 开发模式
 npm run dev
@@ -42,6 +48,32 @@ npm run dev
 npm run build
 npm start
 ```
+
+### 多层级配置示例
+
+多层级配置示例展示了如何使用多个 `autoRouter` 实例，每个实例有不同的配置：
+
+```typescript
+// 管理端路由 - 默认公开
+app.extend(
+  autoRouter({
+    dir: './controllers/admin',
+    defaultRequiresAuth: false,
+    prefix: '/api/admin',
+  })
+)
+
+// 客户端路由 - 默认受保护
+app.extend(
+  autoRouter({
+    dir: './controllers/client',
+    defaultRequiresAuth: true,
+    prefix: '/api/client',
+  })
+)
+```
+
+查看 [multi-level-example.ts](./multi-level-example.ts) 获取完整示例。
 
 ## API 端点
 
@@ -67,6 +99,7 @@ import { autoRouter } from 'hoa-auto-router'
 
 const app = new Hoa()
 
+// 基本配置
 app.extend(
   autoRouter({
     dir: './controllers', // 控制器目录
@@ -74,4 +107,46 @@ app.extend(
     defaultRequiresAuth: false, // 默认权限要求
   })
 )
+
+// 自定义日志输出
+app.extend(
+  autoRouter({
+    dir: './controllers',
+    onLog: (level, message) => {
+      console.log(`[${level.toUpperCase()}] ${message}`)
+    }
+  })
+)
+
+// 禁用日志输出
+app.extend(
+  autoRouter({
+    dir: './controllers',
+    logging: false
+  })
+)
 ```
+
+## 特性演示
+
+### 1. 基本路由
+- 文件名以 HTTP 方法开头：`get-users.ts` → `GET /api/users`
+- 仅方法名：`get.ts` → `GET /api` (新增特性)
+
+### 2. 动态参数
+- `get-[id].ts` → `GET /api/:id`
+- `get-[userId]-[postId].ts` → `GET /api/:userId/:postId`
+
+### 3. 权限控制
+- 全局默认权限配置
+- 单个路由权限覆盖
+- 与 `@chaeco/hoa-jwt-permission` 集成
+
+### 4. 多层级配置
+- 合并式配置（推荐）：一个 `autoRouter` 配置多个目录
+- 分离式配置：多个 `autoRouter` 实例
+
+### 5. 日志管理
+- 控制是否输出日志
+- 自定义日志回调，集成到自己的日志系统
+- 默认显示路由信息、权限标记等

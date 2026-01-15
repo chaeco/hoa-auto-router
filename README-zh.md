@@ -62,8 +62,17 @@ app.listen(3000)
 
 ## 文件命名规则
 
+### 基本格式
+
+文件命名支持两种格式：
+
+1. **仅 HTTP 方法名**：`get.ts`、`post.ts` 等 → 路由为当前目录路径
+2. **方法 + 路由名**：`get-users.ts`、`post-login.ts` 等
+
 ### 单参数示例
 
+- `get.ts` → `GET /api`（位于根目录）
+- `admin/get.ts` → `GET /api/admin`
 - `post-login.ts` → `POST /api/login`
 - `get-users.ts` → `GET /api/users`
 - `get-[id].ts` → `GET /api/:id`
@@ -76,6 +85,8 @@ app.listen(3000)
 
 ### 嵌套目录示例
 
+- `users/get.ts` → `GET /api/users`
+- `users/post.ts` → `POST /api/users`
 - `users/posts/get-[id].ts` → `GET /api/users/posts/:id`
 
 ## 权限元数据
@@ -136,6 +147,162 @@ autoRouter({
 export default createHandler(async (ctx) => { ... }, { requiresAuth: false })
 ```
 
+## Prefix 数组支持
+
+`prefix` 参数支持字符串数组，让同一个控制器目录同时注册到多个前缀：
+
+```typescript
+import { Hoa } from 'hoa'
+import { autoRouter } from '@chaeco/hoa-auto-router'
+
+const app = new Hoa()
+
+// 同一个目录注册到多个前缀
+app.extend(
+  autoRouter({
+    dir: './controllers',
+    prefix: ['/api', '/v1', '/v2'],  // 支持数组
+  })
+)
+
+// 这样 get-users.ts 会同时注册为：
+// GET /api/users
+// GET /v1/users
+// GET /v2/users
+
+app.listen(3000)
+```
+
+**使用场景：**
+
+```typescript
+// 场景 1：API 版本兼容
+app.extend(
+  autoRouter({
+    dir: './controllers/v2',
+    prefix: ['/api', '/v2'],  // 同时支持新旧两个前缀
+  })
+)
+
+// 场景 2：多语言支持
+app.extend(
+  autoRouter({
+    dir: './controllers',
+    prefix: ['/api', '/zh', '/en'],
+  })
+)
+```
+
+## 多层级设置
+
+`hoa-auto-router` 支持两种方式配置多个路由目录：
+
+### 方式 1：合并式配置（推荐）
+
+使用数组一次性配置多个路由目录：
+
+```typescript
+import { Hoa } from 'hoa'
+import { autoRouter } from '@chaeco/hoa-auto-router'
+
+const app = new Hoa()
+
+// 合并式配置 - 一次配置多个目录
+app.extend(
+  autoRouter([
+    {
+      dir: './src/controllers/admin',
+      defaultRequiresAuth: false,
+      prefix: '/api/admin',
+    },
+    {
+      dir: './src/controllers/client',
+      defaultRequiresAuth: true,
+      prefix: '/api/client',
+    },
+  ])
+)
+
+// 即使只有一个配置，也可以使用数组形式（保持一致性）
+app.extend(
+  autoRouter([
+    {
+      dir: './controllers',
+      prefix: '/api',
+    },
+  ])
+)
+
+app.listen(3000)
+```
+
+### 方式 2：多次调用
+
+分别调用多个 `autoRouter` 实例：
+
+```typescript
+import { Hoa } from 'hoa'
+import { autoRouter } from '@chaeco/hoa-auto-router'
+
+const app = new Hoa()
+
+// 管理端路由
+app.extend(
+  autoRouter({
+    dir: './src/controllers/admin',
+    defaultRequiresAuth: false,
+    prefix: '/api/admin',
+  })
+)
+
+// 客户端路由
+app.extend(
+  autoRouter({
+    dir: './src/controllers/client',
+    defaultRequiresAuth: true,
+    prefix: '/api/client',
+  })
+)
+
+app.listen(3000)
+```
+
+**特性：**
+
+- ✅ 每个 `autoRouter` 实例可以有独立的配置
+- ✅ 路由元数据会自动累积，不会相互覆盖
+- ✅ 跨实例的重复路由会被检测并拒绝
+- ✅ 所有路由信息都存储在 `app.$routes` 中
+
+**示例场景：**
+
+```typescript
+// 场景 1: 多个业务模块（合并式）
+app.extend(
+  autoRouter([
+    { dir: './controllers/user', prefix: '/api/user' },
+    { dir: './controllers/order', prefix: '/api/order' },
+    { dir: './controllers/product', prefix: '/api/product' },
+  ])
+)
+
+// 场景 2: 不同权限级别（合并式）
+app.extend(
+  autoRouter([
+    { dir: './controllers/public', defaultRequiresAuth: false, prefix: '/api/public' },
+    { dir: './controllers/protected', defaultRequiresAuth: true, prefix: '/api/protected' },
+  ])
+)
+
+// 场景 3: API 版本管理（合并式）
+app.extend(
+  autoRouter([
+    { dir: './controllers/v1', prefix: '/api/v1' },
+    { dir: './controllers/v2', prefix: '/api/v2' },
+  ])
+)
+```
+
 ## 与 @chaeco/hoa-jwt-permission 集成
 
 路由会自动收集用于权限检查：
@@ -191,8 +358,13 @@ export default createHandler({ requiresAuth: true }, (async (ctx: HoaContext): P
 **选项：**
 
 - `dir` (string) - 控制器目录路径（默认：`'./controllers'`）
-- `prefix` (string) - API 路由前缀（默认：`'/api'`）
+- `prefix` (string | string[]) - API 路由前缀，支持字符串或数组（默认：`'/api'`）
 - `defaultRequiresAuth` (boolean) - 全局默认权限要求（默认：`false`）
+- `strict` (boolean) - 严格模式（默认：`true`）
+  - `true`：只允许纯函数和 `createHandler()` 导出
+  - `false`：允许普通对象导出，但会显示警告
+- `logging` (boolean) - 是否输出路由注册日志（默认：`true`）
+- `onLog` (function) - 自定义日志回调 `(level: 'info' | 'warn' | 'error', message: string) => void`，用于集成自己的日志系统
 
 ### `createHandler(meta?, handler)`
 
@@ -206,6 +378,37 @@ export default createHandler({ requiresAuth: true }, (async (ctx: HoaContext): P
 - `handler` (function) - 异步路由处理器
 
 **返回：** 包装后的处理器函数
+
+### 日志示例
+
+```typescript
+// 默认控制台输出
+app.extend(autoRouter({ dir: './controllers' }))
+
+// 自定义日志输出
+app.extend(autoRouter({
+  dir: './controllers',
+  onLog: (level, message) => {
+    if (level === 'error') {
+      console.error(`[AutoRouter] ${message}`)
+    } else if (level === 'info') {
+      logger.info(`[AutoRouter] ${message}`)
+    }
+  }
+}))
+
+// 禁用所有日志
+app.extend(autoRouter({
+  dir: './controllers',
+  logging: false,
+  // 仍然可以通过 onLog 获取错误信息
+  onLog: (level, message) => {
+    if (level === 'error') {
+      logger.error(message)
+    }
+  }
+}))
+```
 
 ## 验证规则
 

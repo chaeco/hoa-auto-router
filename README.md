@@ -68,49 +68,34 @@ app.listen(3000)
 
 ### File Naming Convention
 
-Files should follow the pattern: `[method]-[name].ts`
+### Basic Format
 
-**Supported HTTP Methods**: `get`, `post`, `put`, `delete`, `patch`, `head`, `options`
+File naming supports two formats:
 
-## Examples
+1. **HTTP method only**: `get.ts`, `post.ts`, etc. → Route is the current directory path
+2. **Method + route name**: `get-users.ts`, `post-login.ts`, etc.
 
-### 1. Basic Route
+### Examples
 
-```typescript
-// controllers/get-users.ts
-export default async ctx => {
-  ctx.res.body = { users: [] }
-}
-// Route: GET /api/users
-```
+**Single Parameter:**
 
-### 3. Multiple Parameters
+- `get.ts` → `GET /api` (at root directory)
+- `admin/get.ts` → `GET /api/admin`
+- `post-login.ts` → `POST /api/login`
+- `get-users.ts` → `GET /api/users`
+- `get-[id].ts` → `GET /api/:id`
+- `delete-[id].ts` → `DELETE /api/:id`
 
-```typescript
-// controllers/get-[userId]-posts.ts
-export default async ctx => {
-  const userId = ctx.params.userId
-  ctx.res.body = { userId }
-}
-// Route: GET /api/:userId/posts
+**Multiple Parameters:**
 
-// controllers/get-[userId]-[postId].ts
-export default async ctx => {
-  const { userId, postId } = ctx.params
-  ctx.res.body = { userId, postId }
-}
-// Route: GET /api/:userId/:postId
-```
+- `get-[userId]-[postId].ts` → `GET /api/:userId/:postId`
+- `put-[userId]-profile.ts` → `PUT /api/:userId/profile`
 
-### 4. Nested Directories
+**Nested Directories:**
 
-```text
-controllers/
-  users/
-    get-[id].ts        // GET /api/users/:id
-    posts/
-      get-[id].ts      // GET /api/users/posts/:id
-```
+- `users/get.ts` → `GET /api/users`
+- `users/post.ts` → `POST /api/users`
+- `users/posts/get-[id].ts` → `GET /api/users/posts/:id`
 
 ## Permission Metadata
 
@@ -172,6 +157,162 @@ autoRouter({
 export default createHandler(async (ctx) => { ... }, { requiresAuth: false })
 ```
 
+## Prefix Array Support
+
+The `prefix` parameter supports string arrays, allowing the same controller directory to be registered with multiple prefixes:
+
+```typescript
+import { Hoa } from 'hoa'
+import { autoRouter } from '@chaeco/hoa-auto-router'
+
+const app = new Hoa()
+
+// Register the same directory with multiple prefixes
+app.extend(
+  autoRouter({
+    dir: './controllers',
+    prefix: ['/api', '/v1', '/v2'],  // Array supported
+  })
+)
+
+// Now get-users.ts will be registered as:
+// GET /api/users
+// GET /v1/users
+// GET /v2/users
+
+app.listen(3000)
+```
+
+**Use Cases:**
+
+```typescript
+// Scenario 1: API version compatibility
+app.extend(
+  autoRouter({
+    dir: './controllers/v2',
+    prefix: ['/api', '/v2'],  // Support both old and new prefixes
+  })
+)
+
+// Scenario 2: Multi-language support
+app.extend(
+  autoRouter({
+    dir: './controllers',
+    prefix: ['/api', '/zh', '/en'],
+  })
+)
+```
+
+## Multi-Level Configuration
+
+`hoa-auto-router` supports two approaches for configuring multiple route directories:
+
+### Approach 1: Merged Configuration (Recommended)
+
+Configure multiple directories at once using an array:
+
+```typescript
+import { Hoa } from 'hoa'
+import { autoRouter } from '@chaeco/hoa-auto-router'
+
+const app = new Hoa()
+
+// Merged configuration - configure multiple directories at once
+app.extend(
+  autoRouter([
+    {
+      dir: './src/controllers/admin',
+      defaultRequiresAuth: false,
+      prefix: '/api/admin',
+    },
+    {
+      dir: './src/controllers/client',
+      defaultRequiresAuth: true,
+      prefix: '/api/client',
+    },
+  ])
+)
+
+// Even with a single configuration, array form is supported (for consistency)
+app.extend(
+  autoRouter([
+    {
+      dir: './controllers',
+      prefix: '/api',
+    },
+  ])
+)
+
+app.listen(3000)
+```
+
+### Approach 2: Multiple Calls
+
+Call `autoRouter` multiple times separately:
+
+```typescript
+import { Hoa } from 'hoa'
+import { autoRouter } from '@chaeco/hoa-auto-router'
+
+const app = new Hoa()
+
+// Admin routes
+app.extend(
+  autoRouter({
+    dir: './src/controllers/admin',
+    defaultRequiresAuth: false,
+    prefix: '/api/admin',
+  })
+)
+
+// Client routes
+app.extend(
+  autoRouter({
+    dir: './src/controllers/client',
+    defaultRequiresAuth: true,
+    prefix: '/api/client',
+  })
+)
+
+app.listen(3000)
+```
+
+**Features:**
+
+- ✅ Each `autoRouter` instance can have independent configuration
+- ✅ Route metadata automatically accumulates without overwriting
+- ✅ Duplicate routes across instances are detected and rejected
+- ✅ All route information is stored in `app.$routes`
+
+**Example Scenarios:**
+
+```typescript
+// Scenario 1: Multiple business modules (merged)
+app.extend(
+  autoRouter([
+    { dir: './controllers/user', prefix: '/api/user' },
+    { dir: './controllers/order', prefix: '/api/order' },
+    { dir: './controllers/product', prefix: '/api/product' },
+  ])
+)
+
+// Scenario 2: Different permission levels (merged)
+app.extend(
+  autoRouter([
+    { dir: './controllers/public', defaultRequiresAuth: false, prefix: '/api/public' },
+    { dir: './controllers/protected', defaultRequiresAuth: true, prefix: '/api/protected' },
+  ])
+)
+
+// Scenario 3: API versioning (merged)
+app.extend(
+  autoRouter([
+    { dir: './controllers/v1', prefix: '/api/v1' },
+    { dir: './controllers/v2', prefix: '/api/v2' },
+  ])
+)
+```
+
 ## Integration with @chaeco/hoa-jwt-permission
 
 Routes automatically collected for permission checking:
@@ -227,8 +368,13 @@ export default createHandler({ requiresAuth: true }, (async (ctx: HoaContext): P
 **Options**:
 
 - `dir` (string) - Controllers directory path (default: `./controllers`)
-- `prefix` (string) - API route prefix (default: `/api`)
+- `prefix` (string | string[]) - API route prefix, supports string or array (default: `'/api'`)
 - `defaultRequiresAuth` (boolean) - Global default permission requirement (default: `false`)
+- `strict` (boolean) - Strict mode (default: `true`)
+  - `true`: Only allow pure functions and `createHandler()` exports
+  - `false`: Allow plain object exports but show warnings
+- `logging` (boolean) - Whether to output route registration logs (default: `true`)
+- `onLog` (function) - Custom logging callback `(level: 'info' | 'warn' | 'error', message: string) => void` for integrating with your own logging system
 
 ### `createHandler(meta?, handler)`
 
@@ -242,6 +388,37 @@ Wrapper function to attach metadata to route handlers.
 - `handler` (function) - The async route handler
 
 **Returns**: The wrapped handler function
+
+### Logging Examples
+
+```typescript
+// Default console output
+app.extend(autoRouter({ dir: './controllers' }))
+
+// Custom logging output
+app.extend(autoRouter({
+  dir: './controllers',
+  onLog: (level, message) => {
+    if (level === 'error') {
+      console.error(`[AutoRouter] ${message}`)
+    } else if (level === 'info') {
+      logger.info(`[AutoRouter] ${message}`)
+    }
+  }
+}))
+
+// Disable all logs but still capture errors
+app.extend(autoRouter({
+  dir: './controllers',
+  logging: false,
+  // Still receive error messages via onLog
+  onLog: (level, message) => {
+    if (level === 'error') {
+      logger.error(message)
+    }
+  }
+}))
+```
 
 ## Validation Rules
 

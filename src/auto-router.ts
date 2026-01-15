@@ -82,17 +82,48 @@ async function loadRoutes(
     prefix: string
     defaultRequiresAuth: boolean
     strict: boolean
-  } = { dir: './controllers', prefix: '/api', defaultRequiresAuth: false, strict: true }
+    logging: boolean
+    onLog?: (level: 'info' | 'warn' | 'error', message: string) => void
+  } = {
+    dir: './controllers',
+    prefix: '/api',
+    defaultRequiresAuth: false,
+    strict: true,
+    logging: true,
+  }
 ) {
-  const { dir, prefix, defaultRequiresAuth, strict } = options
+  const { dir, prefix, defaultRequiresAuth, strict, logging, onLog } = options
   const methods = ['get', 'post', 'put', 'delete', 'patch', 'head', 'options']
-  const registeredRoutes = new Set<string>() // For detecting duplicate routes
-  // 用于检测重复路由
+
+  // Helper function for logging
+  // 日志输出辅助函数
+  const log = (level: 'info' | 'warn' | 'error', message: string) => {
+    if (onLog) {
+      onLog(level, message)
+    }
+
+    // Default console output
+    // 默认控制台输出
+    if (level === 'info' && !logging) return
+
+    switch (level) {
+      case 'info':
+        console.log(message)
+        break
+      case 'warn':
+        console.warn(message)
+        break
+      case 'error':
+        console.error(message)
+        break
+    }
+  }
+
   const importPromises: Promise<void>[] = [] // Collect all import promises
   // 收集所有导入 Promise
 
-  // Initialize app's route metadata storage
-  // 初始化应用的路由元数据存储
+  // Initialize app's route metadata storage (only once)
+  // 初始化应用的路由元数据存储（仅一次）
   if (!app.$routes) {
     app.$routes = {
       publicRoutes: [],
@@ -101,13 +132,26 @@ async function loadRoutes(
     }
   }
 
+  // Initialize registered routes set (shared across all autoRouter calls)
+  // 初始化已注册路由集合（在所有 autoRouter 调用间共享）
+  if (!app.$registeredRoutes) {
+    app.$registeredRoutes = new Set<string>()
+  }
+  const registeredRoutes = app.$registeredRoutes // For detecting duplicate routes
+  // 用于检测重复路由
   // Validation function
   // 验证函数
   function validateFileName(fileName: string): { valid: boolean; method?: string; error?: string } {
     const nameWithoutExt = fileName.replace(/\.(ts|js)$/, '')
 
-    // Check if starts with valid HTTP method
-    // 检查是否以有效的 HTTP 方法开头
+    // Check if file name is exactly a HTTP method (e.g., get.ts, post.ts)
+    // 检查文件名是否恰好是 HTTP 方法（例如：get.ts, post.ts）
+    if (methods.includes(nameWithoutExt)) {
+      return { valid: true, method: nameWithoutExt }
+    }
+
+    // Check if starts with valid HTTP method followed by dash
+    // 检查是否以有效的 HTTP 方法开头，后跟连字符
     let method: string | undefined
     for (const m of methods) {
       if (nameWithoutExt.startsWith(m + '-')) {
@@ -119,8 +163,8 @@ async function loadRoutes(
     if (!method) {
       return {
         valid: false,
-        error: `File name must start with valid HTTP method (${methods.join('|')})`,
-        // 文件名必须以有效的 HTTP 方法开头 (${methods.join('|')})
+        error: `File name must be a valid HTTP method or start with method- (${methods.join('|')})`,
+        // 文件名必须是有效的 HTTP 方法或以 method- 开头 (${methods.join('|')})
       }
     }
 
@@ -144,7 +188,8 @@ async function loadRoutes(
     const pathParts = dirPath.split(/(\/|\\)/).filter(p => p && p !== '/' && p !== '\\')
     for (const part of pathParts) {
       if (methods.includes(part.toLowerCase())) {
-        console.warn(
+        log(
+          'warn',
           `⚠️  Warning: Directory name "${part}" contains HTTP method keyword, consider renaming`
         )
         // 警告: 目录名 "${part}" 包含 HTTP 方法关键字，建议重命名
@@ -174,14 +219,23 @@ async function loadRoutes(
         // 验证文件名
         const validation = validateFileName(file)
         if (!validation.valid) {
-          console.error(`❌ Skip file: ${filePath}`)
+          log('error', `❌ Skip file: ${filePath}`)
           // 跳过文件: ${filePath}
-          console.error(`   ❌ ${validation.error}`)
+          log('error', `   ❌ ${validation.error}`)
           return
         }
 
         const method = validation.method!
-        let routeName = file.replace(/\.(ts|js)$/, '').substring(method.length + 1)
+        const nameWithoutExt = file.replace(/\.(ts|js)$/, '')
+        
+        // If file name is exactly the HTTP method, routeName is empty
+        // 如果文件名恰好是 HTTP 方法，routeName 为空
+        let routeName = ''
+        if (nameWithoutExt !== method) {
+          // Extract route name after "method-"
+          // 提取 "method-" 之后的路由名称
+          routeName = nameWithoutExt.substring(method.length + 1)
+        }
 
         // Process dynamic parameters [id] -> :id, and -[param] -> /:param
         // 处理动态参数 [id] -> :id，以及 -[param] -> /:param
@@ -198,15 +252,26 @@ async function loadRoutes(
 
         // Build full route path
         // 构建完整路由路径
-        let fullPath = basePath
+        let fullPath: string
         if (routeName) {
-          fullPath = `${basePath}/${routeName}`
+          // Has route name: basePath + routeName
+          // 有路由名：basePath + routeName
+          fullPath = basePath ? `${basePath}/${routeName}` : `/${routeName}`
+        } else {
+          // No route name (method-only file): use basePath
+          // 无路由名（仅方法名文件）：使用 basePath
+          fullPath = basePath
         }
 
         fullPath = fullPath.replace(/\/+/g, '/') // Remove double slashes
         // 移除双斜杠
-        if (!fullPath.startsWith('/')) {
+        if (!fullPath.startsWith('/') && fullPath !== '') {
           fullPath = `/${fullPath}`
+        }
+        // Remove trailing slash unless it's the root path
+        // 移除末尾斜杠，除非是根路径
+        if (fullPath.length > 1 && fullPath.endsWith('/')) {
+          fullPath = fullPath.slice(0, -1)
         }
 
         // Detect duplicate routes
@@ -214,9 +279,9 @@ async function loadRoutes(
         const routePath = prefix ? `${prefix}${fullPath}` : fullPath
         const routeKey = `${method.toUpperCase()} ${routePath}`
         if (registeredRoutes.has(routeKey)) {
-          console.error(`❌ Skip file: ${filePath}`)
+          log('error', `❌ Skip file: ${filePath}`)
           // 跳过文件: ${filePath}
-          console.error(`   ❌ Duplicate route: ${routeKey}`)
+          log('error', `   ❌ Duplicate route: ${routeKey}`)
           // 路由重复: ${routeKey}
           return
         }
@@ -241,20 +306,21 @@ async function loadRoutes(
             // Strict mode check: in strict mode, only allow functions or createHandler objects
             // 严格模式检查：在严格模式下，只允许函数或 createHandler 对象
             if (strict && typeof handler !== 'function' && !isRouteConfig(handler)) {
-              console.error(`❌ Failed to load route: ${filePath}`)
+              log('error', `❌ Failed to load route: ${filePath}`)
               // 加载路由失败: ${filePath}
-              console.error(
+              log(
+                'error',
                 `   ❌ In strict mode, only functions or createHandler results are allowed`
               )
               // 严格模式下，只允许导出函数或 createHandler 结果
-              console.error(`   ❌ Current export type: ${typeof handler}`)
+              log('error', `   ❌ Current export type: ${typeof handler}`)
               // 当前导出类型: ${typeof handler}
-              console.error(`   ❌ Correct ways:`)
+              log('error', `   ❌ Correct ways:`)
               // 正确的方式：
-              console.error(`      ✅ export default async (ctx) => { ... }`)
-              console.error(`      ✅ export default createHandler(async (ctx) => { ... }, meta)`)
-              console.error(`      ❌ Not supported: export default { handler, meta }`)
-              console.error(`      💡 Tip: You can set strict: false to disable strict checking`)
+              log('error', `      ✅ export default async (ctx) => { ... }`)
+              log('error', `      ✅ export default createHandler(async (ctx) => { ... }, meta)`)
+              log('error', `      ❌ Not supported: export default { handler, meta }`)
+              log('error', `      💡 Tip: You can set strict: false to disable strict checking`)
               // 提示: 可以设置 strict: false 来禁用严格检查
               return
             }
@@ -263,13 +329,14 @@ async function loadRoutes(
             // 验证规则：每个文件只能有一个导出（只能有默认导出）
             const namedExports = Object.keys(module).filter(key => key !== 'default')
             if (namedExports.length > 0) {
-              console.error(`❌ Failed to load route: ${filePath}`)
+              log('error', `❌ Failed to load route: ${filePath}`)
               // 加载路由失败: ${filePath}
-              console.error(
+              log(
+                'error',
                 `   ❌ File can only have default export, named exports are not allowed`
               )
               // 文件只能有默认导出，不允许命名导出
-              console.error(`   ❌ Detected named exports: ${namedExports.join(', ')}`)
+              log('error', `   ❌ Detected named exports: ${namedExports.join(', ')}`)
               // 检测到的命名导出: ${namedExports.join(', ')}
               return
             }
@@ -294,9 +361,9 @@ async function loadRoutes(
               // Validate handler must be a function
               // 验证 handler 必须是函数
               if (typeof handler !== 'function') {
-                console.error(`❌ Failed to load route: ${filePath}`)
+                log('error', `❌ Failed to load route: ${filePath}`)
                 // 加载路由失败: ${filePath}
-                console.error(`   ❌ createHandler's first parameter must be a function`)
+                log('error', `   ❌ createHandler's first parameter must be a function`)
                 // createHandler 的第一个参数必须是函数
                 return
               }
@@ -312,20 +379,23 @@ async function loadRoutes(
                 // This is the export method of ordinary object { handler, meta }
                 // 这是普通对象 { handler, meta } 的导出方式
                 if (strict) {
-                  console.error(`❌ Failed to load route: ${filePath}`)
+                  log('error', `❌ Failed to load route: ${filePath}`)
                   // 加载路由失败: ${filePath}
-                  console.error(
+                  log(
+                    'error',
                     `   ❌ In strict mode, exporting object { handler, meta } is not allowed`
                   )
                   // 严格模式下，不允许导出对象 { handler, meta }
-                  console.error(`   ❌ Only the following two ways are allowed:`)
+                  log('error', `   ❌ Only the following two ways are allowed:`)
                   // 只允许以下两种方式：
-                  console.error(`      ✅ Way 1: export default async (ctx) => { ... }`)
-                  console.error(
+                  log('error', `      ✅ Way 1: export default async (ctx) => { ... }`)
+                  log(
+                    'error',
                     `      ✅ Way 2: export default createHandler(async (ctx) => { ... }, meta)`
                   )
-                  console.error(`      ❌ Not supported: export default { handler, meta }`)
-                  console.error(
+                  log('error', `      ❌ Not supported: export default { handler, meta }`)
+                  log(
+                    'error',
                     `      💡 Tip: You can set strict: false to disable strict checking`
                   )
                   // 提示: 可以设置 strict: false 来禁用严格检查
@@ -333,29 +403,29 @@ async function loadRoutes(
                 } else {
                   // Non-strict mode: allow ordinary object export, show warning
                   // 非严格模式：允许普通对象导出，显示警告
-                  console.warn(`⚠️  Warning: ${filePath}`)
+                  log('warn', `⚠️  Warning: ${filePath}`)
                   // 警告: ${filePath}
-                  console.warn(`   ⚠️  Detected non-recommended export method (non-strict mode)`)
+                  log('warn', `   ⚠️  Detected non-recommended export method (non-strict mode)`)
                   // 检测到非推荐的导出方式（非严格模式）
                   routeMeta = handler.meta
                   handler = handler.handler
                 }
               } else {
-                console.error(`❌ Failed to load route: ${filePath}`)
+                log('error', `❌ Failed to load route: ${filePath}`)
                 // 加载路由失败: ${filePath}
-                console.error(`   ❌ Exported object must contain handler function`)
+                log('error', `   ❌ Exported object must contain handler function`)
                 // 导出的对象必须包含 handler 函数
                 return
               }
               const handlerType = typeof handler
-              console.error(`❌ Failed to load route: ${filePath}`)
+              log('error', `❌ Failed to load route: ${filePath}`)
               // 加载路由失败: ${filePath}
-              console.error(`   ❌ Unsupported export type: ${handlerType}`)
+              log('error', `   ❌ Unsupported export type: ${handlerType}`)
               // 不支持的导出类型: ${handlerType}
-              console.error(`   ❌ Only the following ways are allowed:`)
+              log('error', `   ❌ Only the following ways are allowed:`)
               // 只允许以下方式：
-              console.error(`      ✅ export default async (ctx) => { ... }`)
-              console.error(`      ✅ export default createHandler(async (ctx) => { ... }, meta)`)
+              log('error', `      ✅ export default async (ctx) => { ... }`)
+              log('error', `      ✅ export default createHandler(async (ctx) => { ... }, meta)`)
               return
             }
 
@@ -366,7 +436,7 @@ async function loadRoutes(
             const requiresAuth =
               routeMeta?.requiresAuth !== undefined ? routeMeta.requiresAuth : defaultRequiresAuth
             const authMark = requiresAuth ? ' 🔒' : ''
-            console.log(`✅ ${method.toUpperCase().padEnd(6)} ${routePath}${authMark}`)
+            log('info', `✅ ${method.toUpperCase().padEnd(6)} ${routePath}${authMark}`)
 
             // Collect route metadata to application instance
             // 收集路由元数据到应用实例
@@ -381,9 +451,9 @@ async function loadRoutes(
             app[method](routePath, handler)
           })
           .catch(err => {
-            console.error(`❌ Failed to load route: ${filePath}`)
+            log('error', `❌ Failed to load route: ${filePath}`)
             // 加载路由失败: ${filePath}
-            console.error(`   ❌ ${err.message}`)
+            log('error', `   ❌ ${err.message}`)
           })
 
         importPromises.push(importPromise)
@@ -391,7 +461,7 @@ async function loadRoutes(
     }
   }
 
-  console.log(`🔄 Scanning controller directory: ${dir}`)
+  log('info', `🔄 Scanning controller directory: ${dir}`)
   // 扫描控制器目录: ${dir}
   const fullDir = resolve(dir)
   scanDir(fullDir)
@@ -402,17 +472,17 @@ async function loadRoutes(
 
   // Output summary after all routes are loaded
   // 所有路由加载完成后输出总结
-  console.log(`📋 Registered routes:`)
+  log('info', `📋 Registered routes:`)
   // 注册的路由:
   if (app.$routes?.all.length === 0) {
-    console.warn(`⚠️  No routes registered!`)
+    log('warn', `⚠️  No routes registered!`)
     // 没有注册任何路由!
   } else {
-    console.log(`   Total: ${app.$routes?.all.length || 0}`)
+    log('info', `   Total: ${app.$routes?.all.length || 0}`)
     // 总计: ${app.$routes?.all.length || 0}
-    console.log(`   Public: ${app.$routes?.publicRoutes.length || 0}`)
+    log('info', `   Public: ${app.$routes?.publicRoutes.length || 0}`)
     // 公开: ${app.$routes?.publicRoutes.length || 0}
-    console.log(`   Protected: ${app.$routes?.protectedRoutes.length || 0}`)
+    log('info', `   Protected: ${app.$routes?.protectedRoutes.length || 0}`)
     // 受保护: ${app.$routes?.protectedRoutes.length || 0}
   }
 }
@@ -423,12 +493,15 @@ async function loadRoutes(
  * Used as application extension
  * 用作应用扩展
  *
+ * Supports both single configuration and merged configuration (array)
+ * 支持单个配置和合并式配置（数组）
+ *
  * Options description:
  * 选项说明：
  *   - dir: Controller directory path (default: './controllers')
  *   dir: 控制器目录路径（默认：'./controllers'）
- *   - prefix: API route prefix (default: '/api')
- *   prefix: API 路由前缀（默认：'/api'）
+ *   - prefix: API route prefix, supports string or array (default: '/api')
+ *   prefix: API 路由前缀，支持字符串或数组（默认：'/api'）
  *   - defaultRequiresAuth: Global default permission requirement (default: false)
  *   defaultRequiresAuth: 全局默认权限要求（默认：false）
  *     - false: All interfaces are public by default, unless explicitly set requiresAuth: true
@@ -441,12 +514,30 @@ async function loadRoutes(
  *     true: 只允许纯函数和 createHandler 导出方式，禁止其他对象导出
  *     - false: Allow ordinary object { handler, meta } export method, but will show warning
  *     false: 允许普通对象 { handler, meta } 的导出方式，但会显示警告
+ *   - logging: Whether to output route registration logs (default: true)
+ *   logging: 是否输出路由注册日志（默认：true）
+ *   - onLog: Custom logging callback for integration with own logging systems
+ *   onLog: 自定义日志输出回调，方便集成自己的日志系统
  *
  * Usage:
  * 使用方式:
- *   // Strict mode (recommended) - only allow function exports
- *   严格模式（推荐）- 只允许函数导出
+ *   // Custom logging - 自定义日志
+ *   app.extend(autoRouter({ 
+ *     dir: './controllers', 
+ *     onLog: (level, msg) => myLogger[level](msg) 
+ *   }))
+ *
+ *   // Single configuration - 单个配置
  *   app.extend(autoRouter({ dir: './controllers' }))
+ *
+ *   // Multiple prefixes - 多个前缀
+ *   app.extend(autoRouter({ dir: './controllers', prefix: ['/api', '/v1'] }))
+ *
+ *   // Merged configuration - 合并式配置
+ *   app.extend(autoRouter([
+ *     { dir: './controllers/admin', prefix: '/api/admin', defaultRequiresAuth: false },
+ *     { dir: './controllers/client', prefix: '/api/client', defaultRequiresAuth: true }
+ *   ]))
  *
  *   // Whitelist mode - protected by default, mark public interfaces
  *   白名单模式 - 默认受保护，标记公开接口
@@ -455,27 +546,73 @@ async function loadRoutes(
  *   // Disable strict mode - allow all export methods (not recommended)
  *   禁用严格模式 - 允许所有导出方式（不推荐）
  *   app.extend(autoRouter({ dir: './controllers', strict: false }))
+ *
+ *   // Disable logging - quiet mode
+ *   禁用日志输出 - 静默模式
+ *   app.extend(autoRouter({ dir: './controllers', logging: false }))
  */
 export function autoRouter(
-  options: {
-    dir?: string
-    prefix?: string
-    defaultRequiresAuth?: boolean
-    strict?: boolean
-  } = {}
+  options:
+    | {
+        dir?: string
+        prefix?: string | string[]
+        defaultRequiresAuth?: boolean
+        strict?: boolean
+        logging?: boolean
+        onLog?: (level: 'info' | 'warn' | 'error', message: string) => void
+      }
+    | Array<{
+        dir?: string
+        prefix?: string | string[]
+        defaultRequiresAuth?: boolean
+        strict?: boolean
+        logging?: boolean
+        onLog?: (level: 'info' | 'warn' | 'error', message: string) => void
+      }> = {}
 ): (app: any) => Promise<void> {
-  const finalOptions = {
-    dir: options.dir || './controllers',
-    prefix: options.prefix || '/api',
-    defaultRequiresAuth: options.defaultRequiresAuth ?? false,
-    strict: options.strict ?? true,
+  // Convert to array for unified processing
+  // 转换为数组以统一处理
+  const optionsArray = Array.isArray(options) ? options : [options]
+
+  // Expand configurations with multiple prefixes
+  // 展开具有多个前缀的配置
+  const expandedOptionsArray: Array<{
+    dir: string
+    prefix: string
+    defaultRequiresAuth: boolean
+    strict: boolean
+    logging: boolean
+    onLog?: (level: 'info' | 'warn' | 'error', message: string) => void
+  }> = []
+
+  for (const opt of optionsArray) {
+    const prefixes = Array.isArray(opt.prefix)
+      ? opt.prefix
+      : [opt.prefix || '/api']
+    
+    for (const prefix of prefixes) {
+      expandedOptionsArray.push({
+        dir: opt.dir || './controllers',
+        prefix: prefix,
+        defaultRequiresAuth: opt.defaultRequiresAuth ?? false,
+        strict: opt.strict ?? true,
+        logging: opt.logging ?? true,
+        onLog: opt.onLog,
+      })
+    }
   }
-  return function (app: any) {
+
+  return async function (app: any) {
     // app.extend(fn) 会直接调用 fn(app)
     if (!app) {
       throw new Error('Auto-router plugin requires an application instance')
     }
-    return loadRoutes(app, finalOptions)
+
+    // Load routes for all configurations sequentially
+    // 依次加载所有配置的路由
+    for (const finalOptions of expandedOptionsArray) {
+      await loadRoutes(app, finalOptions)
+    }
   }
 }
 
